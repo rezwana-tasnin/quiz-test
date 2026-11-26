@@ -56,11 +56,42 @@ type TQuiz = {
   timeLimitSec?: number;
 };
 
+/** Bump when round size / scoreboard schema changes so old 5-question saves don't stick. */
+const QUIZ_STORAGE_VERSION = "v4-nav";
+const QUIZ_STORAGE_VERSION_KEY = "quizStorageVersion";
+
+type TScreen = "start" | "running" | "done";
+
+function migrateQuizStorageIfNeeded() {
+  if (typeof window === "undefined") return;
+  try {
+    const current = window.localStorage.getItem(QUIZ_STORAGE_VERSION_KEY);
+    if (current === QUIZ_STORAGE_VERSION) return;
+
+    // Drop stale in-progress/done quizzes (old builds used 5 questions + old FX)
+    window.localStorage.removeItem("quizzes");
+    // Drop pre-v2 seen maps if any linger
+    window.localStorage.removeItem("quizSeenByUser");
+    window.localStorage.removeItem("quizSeenGlobal");
+
+    window.localStorage.setItem(QUIZ_STORAGE_VERSION_KEY, QUIZ_STORAGE_VERSION);
+  } catch {
+    // ignore
+  }
+}
+
 function readStoredQuizzes(): TQuiz[] {
   if (typeof window === "undefined") return [];
   try {
+    migrateQuizStorageIfNeeded();
     const raw = window.localStorage.getItem("quizzes");
-    return raw ? (JSON.parse(raw) as TQuiz[]) : [];
+    const parsed = raw ? (JSON.parse(raw) as TQuiz[]) : [];
+    // Extra safety: ignore any leftover short rounds from older clients
+    return parsed.filter(
+      (q) =>
+        Array.isArray(q.questionIds) &&
+        q.questionIds.length === QUESTIONS_PER_ROUND
+    );
   } catch {
     return [];
   }
@@ -437,8 +468,6 @@ function CircularTimer({
   );
 }
 
-const WINNER_CELEBRATE = ["🎉", "🥳", "🏆", "⭐", "🎊", "✨", "🎈", "👑", "💥", "🌟"];
-
 const FUNNY_COMMENTS = {
   winner: [
     "বাপরে বাপ! ব্রেইনটা আজ পুরো চার্জড!",
@@ -473,7 +502,11 @@ const FUNNY_COMMENTS = {
 const pickFunnyComment = (pool: readonly string[]) =>
   pool[Math.floor(Math.random() * pool.length)] || pool[0];
 
-/** Messenger-style float — soft for normal, full-panel party for winners. */
+/**
+ * Messenger-style: one emoji type only.
+ * Center hero stays single; copies of that same emoji float up.
+ * Winner = denser float across the whole score card (still the same emoji).
+ */
 function EmojiFloatFX({
   emoji,
   celebrate = false,
@@ -482,17 +515,14 @@ function EmojiFloatFX({
   celebrate?: boolean;
 }) {
   const bits = useMemo(() => {
-    const count = celebrate ? 42 : 14;
+    const count = celebrate ? 28 : 12;
     return Array.from({ length: count }, (_, i) => ({
       id: i,
-      left: celebrate
-        ? (i * 7.3) % 100
-        : 22 + ((i * 19) % 56),
-      size: celebrate ? 26 + (i % 6) * 7 : 28 + (i % 4) * 5,
-      duration: celebrate ? 2.1 + (i % 5) * 0.55 : 2.4 + (i % 4) * 0.4,
-      delay: celebrate ? (i % 12) * 0.18 : (i % 7) * 0.28,
-      drift: (i % 2 === 0 ? 1 : -1) * (10 + (i % 6) * 12),
-      symbol: celebrate ? WINNER_CELEBRATE[i % WINNER_CELEBRATE.length] : emoji,
+      left: celebrate ? (i * 8.1) % 100 : 28 + ((i * 17) % 44),
+      size: celebrate ? 28 + (i % 5) * 6 : 30 + (i % 3) * 4,
+      duration: celebrate ? 2.2 + (i % 5) * 0.5 : 2.5 + (i % 4) * 0.35,
+      delay: celebrate ? (i % 10) * 0.2 : (i % 6) * 0.3,
+      drift: (i % 2 === 0 ? 1 : -1) * (10 + (i % 5) * 10),
     }));
   }, [emoji, celebrate]);
 
@@ -511,16 +541,16 @@ function EmojiFloatFX({
         };
         return (
           <span
-            key={`${b.symbol}-${b.id}`}
+            key={`${emoji}-${b.id}`}
             style={style}
             className={cn(
               "absolute select-none",
               celebrate
                 ? "bottom-[-6%] animate-emoji-float-party"
-                : "bottom-[6%] animate-emoji-float"
+                : "bottom-[8%] animate-emoji-float"
             )}
           >
-            {b.symbol}
+            {emoji}
           </span>
         );
       })}
@@ -538,29 +568,118 @@ export default function Quiz() {
   const [showFx, setShowFx] = useState(false);
   const [submitWarning, setSubmitWarning] = useState("");
   const [timeLeft, setTimeLeft] = useState<number>(0);
+  // Session UI only — never resume mid-quiz / old scoreboard after refresh
+  const [screen, setScreen] = useState<TScreen>("start");
+  const [activeQuizId, setActiveQuizId] = useState<number | null>(null);
+  const ignorePopRef = useRef(false);
 
-  useEffect(() => {
-    setQuizzesState(readStoredQuizzes());
-    setReady(true);
-  }, []);
+  const persistQuizzes = (value: TQuiz[]) => {
+    try {
+      window.localStorage.setItem("quizzes", JSON.stringify(value));
+    } catch {
+      // ignore quota / private mode errors
+    }
+  };
 
   const setQuizzes = (next: TQuiz[] | ((prev: TQuiz[]) => TQuiz[])) => {
     setQuizzesState((prev) => {
       const value = typeof next === "function" ? next(prev) : next;
-      try {
-        window.localStorage.setItem("quizzes", JSON.stringify(value));
-      } catch {
-        // ignore quota / private mode errors
-      }
+      persistQuizzes(value);
       return value;
     });
   };
 
-  const quiz = useMemo(() => {
-    const activeQuiz = quizzes.find(
-      (q) => q.status === "running" || q.status === "done"
+  const goFrontPage = (opts?: { clearPlayer?: boolean }) => {
+    const clearPlayer = opts?.clearPlayer !== false;
+    setAnswers({});
+    setSubmitWarning("");
+    setShowFx(false);
+    setTimeLeft(0);
+    setScreen("start");
+    setActiveQuizId(null);
+    if (clearPlayer) {
+      setName("");
+      setAge(18);
+    }
+    setQuizzesState((prev) => {
+      const next = prev
+        .map((q) =>
+          q.status === "running" ? { ...q, status: "done" as const } : q
+        )
+        .filter((q) => q.status === "done");
+      persistQuizzes(next);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    // Cold load / refresh → always name+age front page (keep done history for anti-repeat)
+    const stored = readStoredQuizzes().map((q) =>
+      q.status === "running" ? { ...q, status: "done" as const } : q
     );
-    if (activeQuiz) return activeQuiz;
+    const historyOnly = stored.filter((q) => q.status === "done");
+    persistQuizzes(historyOnly);
+    setQuizzesState(historyOnly);
+    setScreen("start");
+    setActiveQuizId(null);
+    setAnswers({});
+    setShowFx(false);
+    setSubmitWarning("");
+    setTimeLeft(0);
+
+    ignorePopRef.current = true;
+    window.history.replaceState(
+      { quizScreen: "start" },
+      "",
+      window.location.pathname + window.location.search
+    );
+    window.setTimeout(() => {
+      ignorePopRef.current = false;
+    }, 0);
+
+    setReady(true);
+  }, []);
+
+  // Chrome/browser Back → quiz front page (NOT in-quiz question Back)
+  useEffect(() => {
+    const onPopState = () => {
+      if (ignorePopRef.current) return;
+      goFrontPage({ clearPlayer: true });
+      ignorePopRef.current = true;
+      window.history.replaceState(
+        { quizScreen: "start" },
+        "",
+        window.location.pathname + window.location.search
+      );
+      window.setTimeout(() => {
+        ignorePopRef.current = false;
+      }, 0);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const pushScreen = (quizScreen: TScreen, quizId: number) => {
+    window.history.pushState(
+      { quizScreen, quizId },
+      "",
+      window.location.pathname + window.location.search
+    );
+  };
+
+  const replaceScreen = (quizScreen: TScreen, quizId?: number) => {
+    window.history.replaceState(
+      { quizScreen, quizId },
+      "",
+      window.location.pathname + window.location.search
+    );
+  };
+
+  const quiz = useMemo(() => {
+    if ((screen === "running" || screen === "done") && activeQuizId != null) {
+      const activeQuiz = quizzes.find((q) => q.id === activeQuizId);
+      if (activeQuiz) return activeQuiz;
+    }
 
     const pendingQuiz: TQuiz = {
       id: Date.now(),
@@ -572,7 +691,7 @@ export default function Quiz() {
       questionIds: getRandomQuestionIds(),
     };
     return pendingQuiz;
-  }, [quizzes]);
+  }, [quizzes, screen, activeQuizId]);
 
   const questions = useMemo(() => {
     return quiz.questionIds
@@ -629,10 +748,13 @@ export default function Quiz() {
       status: "done",
       results: computedResults,
     });
+    setScreen("done");
+    // Replace "running" history entry so browser Back skips mid-quiz → front page
+    replaceScreen("done", quiz.id);
   };
 
   useEffect(() => {
-    if (quiz.status !== "running") {
+    if (screen !== "running") {
       timerArmedRef.current = false;
       return;
     }
@@ -657,21 +779,21 @@ export default function Quiz() {
       window.clearTimeout(armId);
       window.clearInterval(interval);
     };
-  }, [quiz.status, quiz.id, totalTimeSec]);
+  }, [screen, quiz.id, totalTimeSec]);
 
   useEffect(() => {
     if (
-      quiz.status === "running" &&
+      screen === "running" &&
       timeLeft === 0 &&
       timerArmedRef.current &&
       questions.length > 0
     ) {
       finalizeQuiz(true);
     }
-  }, [timeLeft, quiz.status]);
+  }, [timeLeft, screen]);
 
   useEffect(() => {
-    if (quiz.status !== "done") {
+    if (screen !== "done") {
       setShowFx(false);
       return;
     }
@@ -682,7 +804,7 @@ export default function Quiz() {
       16000
     );
     return () => window.clearTimeout(timer);
-  }, [quiz.status, quiz.id]);
+  }, [screen, quiz.id]);
 
   const onStartQuiz = () => {
     const cleanName = name.trim() || "Player";
@@ -714,6 +836,9 @@ export default function Quiz() {
       newQuiz,
       ...prev.filter((q) => q.status !== "running" && q.status !== "pending"),
     ]);
+    setActiveQuizId(newQuiz.id);
+    setScreen("running");
+    pushScreen("running", newQuiz.id);
   };
 
   const onPlayAgainSamePlayer = () => {
@@ -744,17 +869,20 @@ export default function Quiz() {
       timeLimitSec: limitSec,
     };
 
-    setQuizzes((prev) => [newQuiz, ...prev]);
+    setQuizzes((prev) => [
+      newQuiz,
+      ...prev.map((q) =>
+        q.status === "running" ? { ...q, status: "done" as const } : q
+      ),
+    ]);
+    setActiveQuizId(newQuiz.id);
+    setScreen("running");
+    pushScreen("running", newQuiz.id);
   };
 
   const onRestartToStartScreen = () => {
-    setAnswers({});
-    setName("");
-    setAge(18);
-    setSubmitWarning("");
-    setShowFx(false);
-    setTimeLeft(0);
-    setQuizzes([]);
+    goFrontPage({ clearPlayer: true });
+    replaceScreen("start");
   };
 
   const results = quiz.results || [];
@@ -831,7 +959,7 @@ export default function Quiz() {
         <header
           className={cn(
             "text-center",
-            quiz.status === "pending" ? "mb-8 sm:mb-10" : "mb-5"
+            screen === "start" ? "mb-8 sm:mb-10" : "mb-5"
           )}
         >
           <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em] text-white/90 backdrop-blur-md">
@@ -841,14 +969,14 @@ export default function Quiz() {
           <h1
             className={cn(
               "font-display font-extrabold tracking-tight text-white drop-shadow-[0_4px_0_rgba(0,0,0,0.25)]",
-              quiz.status === "pending"
+              screen === "start"
                 ? "text-5xl sm:text-7xl"
                 : "text-3xl sm:text-4xl"
             )}
           >
             Quiz <span className="text-[#ffc43d]">Test</span>
           </h1>
-          {quiz.status === "pending" && (
+          {screen === "start" && (
             <p className="mx-auto mt-3 max-w-md text-base font-semibold text-white/80 sm:text-lg">
               সাধারণ জ্ঞানের মজার ধাঁধা — টাইমার চালু, মস্তিষ্ক গরম করো।
             </p>
@@ -857,7 +985,7 @@ export default function Quiz() {
 
         <div className="rounded-[1.75rem] border border-white/20 bg-white/95 p-5 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.55)] backdrop-blur-sm sm:p-7">
           {/* 1. Start Screen */}
-          {quiz.status === "pending" && (
+          {screen === "start" && (
             <section key="start" className="space-y-6">
               <div className="space-y-2">
                 <label className="block text-xs font-bold uppercase tracking-wider text-[#3d4a66]">
@@ -892,7 +1020,7 @@ export default function Quiz() {
           )}
 
           {/* 2. Running Screen */}
-          {quiz.status === "running" && question && (
+          {screen === "running" && question && (
             <section key={`q-${question.id}-${quiz.questionIndex}`}>
               <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                 <div className="inline-flex items-center gap-2 rounded-full border border-[#14213d]/10 bg-[#f7f9fc] px-3 py-1.5 text-sm font-semibold text-ink">
@@ -1095,7 +1223,7 @@ export default function Quiz() {
           )}
 
           {/* 3. Results */}
-          {quiz.status === "done" && (
+          {screen === "done" && (
             <section key="done" className="space-y-5">
               <div
                 className={cn(

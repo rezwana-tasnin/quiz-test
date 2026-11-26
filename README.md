@@ -1,53 +1,80 @@
 # Quiz Test — GK Brain Twist
 
-A timed Bangla general-knowledge quiz with brain-twist riddles, funny score reactions, and a category-ready arena UI.
+Timed Bangla quiz app with curiosity GK, funny ধাঁধা, IQ/patterns, and math/geometry. Clear option select (no mid-quiz spoilers), Messenger-style scoreboard (one center emoji + same emoji floating), and clean browser navigation.
 
-Built as a portfolio piece: lively enough to demo, clean enough to extend into multiple quiz categories later.
+## Screenshots (current UI — Nov 2026)
 
-## Screenshots
+> `docs/screenshots/` refreshed to match live app: **10 questions**, one middle emoji, Messenger-style float of that same emoji.
 
-### 1. Start
+### 1. Start — front page
 
 ![Start screen](./docs/screenshots/01-start.png)
 
-### 2. Running
+Name + age → Start quiz. Also the screen for refresh / Chrome Back.
+
+### 2. Running — 10 questions
 
 ![Running quiz](./docs/screenshots/02-running.png)
 
-### 3. Perfect — 10/10
+`1/10` timer, clear **Selected** option, in-quiz Back/Next only.
+
+### 3. Winner — 10/10
 
 ![Winner result](./docs/screenshots/03-winner.png)
 
-### 4. High — 7–9/10 (≥70%)
+One center 🏆; copies of the **same** 🏆 float across the card + funny comment.
 
-![Near miss result](./docs/screenshots/04-near-miss.png)
+### 4. High — 8/10 (≥70%)
 
-### 5. Mid — 4–6/10 (≥40%)
+![High result](./docs/screenshots/04-near-miss.png)
 
-![Medium result](./docs/screenshots/05-medium.png)
+One center 🔥; same 🔥 floats + funny comment + wrong-only review.
 
-### 6. Low — 0–3/10
+### 5. Mid — 5/10 (≥40%)
 
-![Fail result](./docs/screenshots/06-fail.png)
+![Mid result](./docs/screenshots/05-medium.png)
+
+One center 😅; same 😅 floats + funny comment + wrong review.
+
+### 6. Low — 2/10 (&lt;40%)
+
+![Low result](./docs/screenshots/06-fail.png)
+
+One center 😢; same 😢 floats + funny comment + wrong review.
+
+## App states
+
+| State | What you see |
+| --- | --- |
+| **Start** | Name + age form |
+| **Running** | 10 questions, Selected highlight, no right/wrong leak |
+| **Winner** | 10/10 · 🏆 · party density float of 🏆 only |
+| **High** | 7–9/10 · 🔥 |
+| **Mid** | 4–6/10 · 😅 |
+| **Low** | 0–3/10 · 😢 |
+
+Scoreboard always: name · age, X/10, %, funny comment (random per tier), progress bar, wrong-only review (hidden on perfect), Play again / Change player.
+
+## Navigation
+
+| Control | Behavior |
+| --- | --- |
+| Chrome / browser **Back** | Front page (name + age) |
+| In-quiz **← Back** / **Next →** | Previous / next question |
+| Refresh / new visit | Front page — no mid-quiz resume |
+| Change player | Front page, cleared player |
 
 ## Features
 
-- **Timed rounds** — 10 questions per round; timer scales with question count (~20s each, min 30s)
-- **250-question bank** — easy / medium / hard mix (≈68 / 96 / 86): GK twist, ধাঁধা, IQ/patterns, math/geometry
-- **No repeat until bank ends** — same or different users won’t see a used question again until all 250 are exhausted, then a new cycle starts (`quizSeenGlobal_v2` + `quizSeenByUser_v2`)
-- **Clear option select** — selected answer gets a strong highlight + Selected badge (no right/wrong leak mid-quiz)
-- **Results only reveal** — correct / wrong feedback appears on the final scoreboard; review lists wrong answers only
-- **Score reactions** — rotating Bangla funny comments + floating emoji; full-card celebrate on a perfect 10/10
-- **Local persistence** — quiz history + global/per-user seen IDs in `localStorage`
-- **Category-ready shell** — shared night-arena layout so future categories can plug in
+- **10 questions / round**; timer ≈ 3:20 (`max(30, count × 20)`)  
+- **250-question bank** — GK wow-facts, ধাঁধা, IQ/patterns, math/geometry  
+- **No repeat** until bank exhausted (global + per-user `*_v2` keys)  
+- Option **Selected** only mid-quiz; right/wrong on scoreboard  
+- Storage `v4-nav` clears stale 5-question sessions  
 
 ## Stack
 
-- React 19
-- React Router 7
-- Vite
-- Tailwind CSS 4
-- TypeScript
+React 19 · React Router 7 · Vite · Tailwind CSS 4 · TypeScript  
 
 ## Run locally
 
@@ -62,32 +89,16 @@ Open [http://localhost:5173](http://localhost:5173).
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Start development server |
+| `npm run dev` | Development server |
 | `npm run build` | Production build |
 | `npm start` | Serve production build |
-| `npm run typecheck` | Generate route types + TypeScript check |
+| `npm run typecheck` | Route types + TypeScript check |
 
-## Project notes
+## Project files
 
-- Question bank: `app/data/questions.json` (250 unique items, ids 1–250)
-- Main UI + game flow: `app/routes/Quiz.tsx` (`QUESTIONS_PER_ROUND = 10`, `SECONDS_PER_QUESTION = 20`)
-- Shared button styles: `app/components/Button.tsx`
-- Scoreboard FX styles: `app/app.css` (`.animate-emoji-float`, `.animate-emoji-float-party`)
-- Screenshots: `docs/screenshots/01` → `06`
-
-## How scoring works
-
-| Result | Score | Reaction |
-| --- | --- | --- |
-| Perfect | 10/10 | 🏆 + party emoji float + winner comments |
-| High | ≥70% (7–9) | 🔥 + floating emoji + near-miss comments |
-| Mid | ≥40% (4–6) | 😅 + mid comments |
-| Low | under 40% (0–3) | 😢 + fail comments |
-
-## Recent updates
-
-- Rounds are **10 questions**; timer = `max(30, count × 20)` seconds
-- Question bank rebuilt to **250** curiosity-led items (GK wow-facts, funny ধাঁধা, IQ/patterns, math/geometry)
-- **No repeats** across users until the full bank is used; recycle resets `quizSeenGlobal_v2` + per-user maps
-- Option select is visually clear without mid-quiz right/wrong reveal
-- Scoreboard: funny rotating comments + floating emoji (full-card celebrate on 10/10); wrong-only review
+| Path | Role |
+| --- | --- |
+| `app/data/questions.json` | 250 questions |
+| `app/routes/Quiz.tsx` | Flow, scoring, single-emoji FX, nav |
+| `app/app.css` | Float animations |
+| `docs/screenshots/01`–`06` | Current UI stills (updated) |
